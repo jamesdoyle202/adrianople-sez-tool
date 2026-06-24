@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "country": "Indonesia",
+    "sez_name": "Indonesia Test 1",
+    "country_normalized": "indonesia",
+    "sez_name_normalized": "indonesia test 1",
+    "source": "Indonesia Test 1",
+    "contributor": "JD",
+    "notes": "This SEZ had rough boundaries",
+    "date": "2026-06-24",
+    "file": "indonesia_indonesia_test_1.geojson"
+  }
+]
