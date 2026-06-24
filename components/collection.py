@@ -17,8 +17,3 @@ def render() -> None:
     with col2:
         if st.button("Manual Polygon Extraction", use_container_width=True):
             go_to("manual_extraction")
-
-
-def render_manual_extraction() -> None:
-    render_back_link(target="collection")
-    st.markdown("# Manual Polygon Extraction — coming soon")

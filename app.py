@@ -1,6 +1,6 @@
 import streamlit as st
 
-from components import collection, database, import_tool
+from components import collection, database, import_tool, manual_tool
 from config import APP_NAME, GLOBAL_CSS, PAGE_LAYOUT, PAGE_TITLE
 
 st.set_page_config(
@@ -39,4 +39,4 @@ elif st.session_state.page == "import":
     import_tool.render()
 
 elif st.session_state.page == "manual_extraction":
-    collection.render_manual_extraction()
+    manual_tool.render()
