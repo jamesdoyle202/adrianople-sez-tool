@@ -77,6 +77,27 @@ def read_index() -> List[Dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+def raw_geojson_url(filename: str) -> str:
+    return (
+        f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/"
+        f"{GITHUB_BRANCH}/{POLYGONS_DIR}/{filename}"
+    )
+
+
+def read_geojson(filename: str) -> Dict[str, Any]:
+    path = f"{POLYGONS_DIR}/{filename}"
+    file_data = _get_file(path)
+    if file_data is None:
+        raise GitHubAPIError(f"GeoJSON file not found: {filename}")
+
+    content = base64.b64decode(file_data["content"]).decode("utf-8")
+    data = json.loads(content)
+    if not isinstance(data, dict):
+        raise GitHubAPIError(f"GeoJSON file is invalid: {filename}")
+
+    return data
+
+
 def check_duplicate(
     index_data: List[Dict[str, Any]],
     country_normalized: str,
