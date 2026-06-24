@@ -1,12 +1,19 @@
 import json
 import re
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Dict, List
 
+import requests
 import streamlit as st
 
 from components.navigation import render_back_link
-from config import INDEX_FILE, POLYGONS_DIR
+from utils.github_api import (
+    GitHubAPIError,
+    check_duplicate,
+    read_index,
+    write_geojson,
+    write_index,
+)
 
 
 def normalize(value: str) -> str:
@@ -22,37 +29,6 @@ def filename_for(country: str, sez_name: str) -> str:
     return f"{country_slug}_{sez_slug}.geojson"
 
 
-def load_index() -> list[dict[str, Any]]:
-    if not INDEX_FILE.exists():
-        return []
-
-    with INDEX_FILE.open(encoding="utf-8") as index_file:
-        data = json.load(index_file)
-
-    return data if isinstance(data, list) else []
-
-
-def save_index(entries: list[dict[str, Any]]) -> None:
-    INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with INDEX_FILE.open("w", encoding="utf-8") as index_file:
-        json.dump(entries, index_file, indent=2)
-        index_file.write("\n")
-
-
-def find_existing_index(entries: list[dict[str, Any]], country: str, sez_name: str) -> Optional[int]:
-    country_normalized = normalize(country)
-    sez_name_normalized = normalize(sez_name)
-
-    for index, entry in enumerate(entries):
-        if (
-            entry.get("country_normalized") == country_normalized
-            and entry.get("sez_name_normalized") == sez_name_normalized
-        ):
-            return index
-
-    return None
-
-
 def build_entry(
     country: str,
     sez_name: str,
@@ -61,7 +37,7 @@ def build_entry(
     notes: str,
     saved_date: str,
     filename: str,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     return {
         "country": country.strip(),
         "sez_name": sez_name.strip(),
@@ -81,11 +57,13 @@ def save_polygon(
     source: str,
     contributor: str,
     notes: str,
-    geojson_data: dict[str, Any],
+    geojson_data: Dict[str, Any],
 ) -> str:
-    entries = load_index()
+    entries = read_index()
     filename = filename_for(country, sez_name)
     saved_date = date.today().isoformat()
+    country_normalized = normalize(country)
+    sez_name_normalized = normalize(sez_name)
     entry = build_entry(
         country=country,
         sez_name=sez_name,
@@ -96,20 +74,27 @@ def save_polygon(
         filename=filename,
     )
 
-    existing_index = find_existing_index(entries, country, sez_name)
-    if existing_index is not None:
-        entries[existing_index] = entry
+    existing_entry = check_duplicate(entries, country_normalized, sez_name_normalized)
+    if existing_entry is not None:
+        for index, current_entry in enumerate(entries):
+            if (
+                current_entry.get("country_normalized") == country_normalized
+                and current_entry.get("sez_name_normalized") == sez_name_normalized
+            ):
+                entries[index] = entry
+                break
+        action = "Update"
     else:
         entries.append(entry)
+        action = "Add"
 
-    POLYGONS_DIR.mkdir(parents=True, exist_ok=True)
-    polygon_path = POLYGONS_DIR / filename
-    with polygon_path.open("w", encoding="utf-8") as polygon_file:
-        json.dump(geojson_data, polygon_file, indent=2)
-        polygon_file.write("\n")
+    display_name = sez_name.strip()
+    commit_message = f"{action} {display_name} polygon"
 
-    save_index(entries)
-    return sez_name.strip()
+    write_geojson(filename, geojson_data, commit_message)
+    write_index(entries, commit_message)
+
+    return display_name
 
 
 def render() -> None:
@@ -159,12 +144,17 @@ def render() -> None:
         st.error("Source and Contributor are required.")
         return
 
-    saved_sez_name = save_polygon(
-        country=country,
-        sez_name=sez_name,
-        source=source,
-        contributor=contributor,
-        notes=notes,
-        geojson_data=geojson_data,
-    )
-    st.success(f"{saved_sez_name} saved.")
+    try:
+        saved_sez_name = save_polygon(
+            country=country,
+            sez_name=sez_name,
+            source=source,
+            contributor=contributor,
+            notes=notes,
+            geojson_data=geojson_data,
+        )
+    except (GitHubAPIError, requests.RequestException, json.JSONDecodeError):
+        st.error("Something went wrong — please try again.")
+        return
+
+    st.success(f"{saved_sez_name} saved to database.")
