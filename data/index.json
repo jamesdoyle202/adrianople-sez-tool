@@ -9,5 +9,16 @@
     "notes": "This SEZ had rough boundaries",
     "date": "2026-06-24",
     "file": "indonesia_indonesia_test_1.geojson"
+  },
+  {
+    "country": "Indonesia",
+    "sez_name": "Test 1",
+    "country_normalized": "indonesia",
+    "sez_name_normalized": "test 1",
+    "source": "Test 1 Test",
+    "contributor": "JD",
+    "notes": "Test 1",
+    "date": "2026-06-25",
+    "file": "indonesia_test_1.geojson"
   }
 ]
