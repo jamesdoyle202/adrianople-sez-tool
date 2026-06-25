@@ -54,6 +54,11 @@ def init_map_state() -> None:
         st.session_state.manual_saved_fingerprint = ""
 
 
+def init_session_state() -> None:
+    if "manual_session_active" not in st.session_state:
+        st.session_state.manual_session_active = False
+
+
 def update_map_center(country: str) -> None:
     country = country.strip()
     if not country:
@@ -70,6 +75,31 @@ def update_map_center(country: str) -> None:
         st.session_state.manual_map_center = location
         st.session_state.manual_map_zoom = COUNTRY_ZOOM
         st.session_state.manual_geocoded_country = country
+
+
+def start_session(country: str, collector: str, source: str, session_date: str) -> None:
+    st.session_state.manual_session_active = True
+    st.session_state.manual_session_country = country.strip()
+    st.session_state.manual_session_collector = collector.strip()
+    st.session_state.manual_session_source = source.strip()
+    st.session_state.manual_session_date = session_date
+    st.session_state.manual_saved_fingerprint = ""
+    update_map_center(country)
+
+
+def end_session() -> None:
+    st.session_state.manual_session_active = False
+    for key in (
+        "manual_session_country",
+        "manual_session_collector",
+        "manual_session_source",
+        "manual_session_date",
+        "manual_map_center",
+        "manual_map_zoom",
+        "manual_geocoded_country",
+        "manual_saved_fingerprint",
+    ):
+        st.session_state.pop(key, None)
 
 
 def build_map(center: Tuple[float, float], zoom: int) -> folium.Map:
@@ -149,13 +179,6 @@ def to_feature_collection(drawings: Any) -> Dict[str, Any]:
     }
 
 
-def metadata_is_valid(country: str, sez_name: str, source: str, contributor: str) -> bool:
-    return all(
-        value.strip()
-        for value in (country, sez_name, source, contributor)
-    )
-
-
 def clear_database_cache() -> None:
     try:
         from components.database import load_geojson, load_index
@@ -166,36 +189,32 @@ def clear_database_cache() -> None:
         pass
 
 
-def handle_drawings(
+def save_drawn_polygon(
     drawings: Any,
-    country: str,
     sez_name: str,
-    source: str,
-    contributor: str,
     notes: str,
 ) -> None:
-    fingerprint = drawings_fingerprint(drawings)
-    if not fingerprint or fingerprint == st.session_state.manual_saved_fingerprint:
-        return
-
     features = polygon_features(drawings)
     if not features:
+        st.error("Draw a polygon on the map before saving.")
         return
 
-    if not metadata_is_valid(country, sez_name, source, contributor):
-        st.warning("Fill in Country, SEZ Name, Source, and Contributor to save.")
+    if not sez_name.strip():
+        st.error("SEZ Name is required.")
         return
 
     geojson_data = to_feature_collection(drawings)
+    fingerprint = drawings_fingerprint(drawings)
 
     try:
         saved_sez_name = save_polygon(
-            country=country,
+            country=st.session_state.manual_session_country,
             sez_name=sez_name,
-            source=source,
-            contributor=contributor,
+            source=st.session_state.manual_session_source,
+            contributor=st.session_state.manual_session_collector,
             notes=notes,
             geojson_data=geojson_data,
+            saved_date=st.session_state.manual_session_date,
         )
     except (GitHubAPIError, requests.RequestException, json.JSONDecodeError):
         st.error("Something went wrong — please try again.")
@@ -206,25 +225,42 @@ def handle_drawings(
     st.success(f"{saved_sez_name} saved to database.")
 
 
-def render() -> None:
-    render_back_link(target="collection")
-    st.markdown("# Manual Polygon Extraction")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    init_map_state()
+def render_setup_form() -> None:
     today = date.today().isoformat()
 
-    country = st.text_input("Country", key="manual_country")
-    sez_name = st.text_input("SEZ Name", key="manual_sez_name")
-    source = st.text_input("Source", key="manual_source")
-    contributor = st.text_input("Contributor", key="manual_contributor")
-    notes = st.text_area("Notes", key="manual_notes")
-    st.text_input("Date", value=today, disabled=True)
+    with st.form("manual_session_setup"):
+        country = st.text_input("Country")
+        collector = st.text_input("Collector name")
+        source = st.text_input("Source")
+        st.text_input("Date", value=today, disabled=True)
+        submitted = st.form_submit_button("Start Session")
 
-    update_map_center(country)
+    if not submitted:
+        return
+
+    if not country.strip() or not collector.strip() or not source.strip():
+        st.error("Country, Collector name, and Source are required.")
+        return
+
+    start_session(country, collector, source, today)
+    st.rerun()
+
+
+def render_active_session() -> None:
+    country = st.session_state.manual_session_country
+    collector = st.session_state.manual_session_collector
+    source = st.session_state.manual_session_source
+    session_date = st.session_state.manual_session_date
+
+    info_col, action_col = st.columns([5, 1])
+    with info_col:
+        st.caption(f"Session: {country} | {collector} | {source} | {session_date}")
+    with action_col:
+        if st.button("End Session", key="manual_end_session", use_container_width=True):
+            end_session()
+            st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("Draw one or more polygons on the map. Each completed polygon saves automatically.")
 
     map_obj = build_map(
         st.session_state.manual_map_center,
@@ -241,11 +277,37 @@ def render() -> None:
         zoom=st.session_state.manual_map_zoom,
     )
 
-    handle_drawings(
-        map_output.get("all_drawings") if map_output else None,
-        country=country,
-        sez_name=sez_name,
-        source=source,
-        contributor=contributor,
-        notes=notes,
+    drawings = map_output.get("all_drawings") if map_output else None
+    features = polygon_features(drawings)
+    fingerprint = drawings_fingerprint(drawings)
+    has_unsaved_polygons = bool(
+        features and fingerprint != st.session_state.manual_saved_fingerprint
     )
+
+    if not has_unsaved_polygons:
+        st.caption("Draw a polygon on the map to save it.")
+        return
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.form("manual_polygon_save", clear_on_submit=True):
+        sez_name = st.text_input("SEZ Name")
+        notes = st.text_area("Notes")
+        submitted = st.form_submit_button("Save")
+
+    if submitted:
+        save_drawn_polygon(drawings, sez_name, notes)
+
+
+def render() -> None:
+    render_back_link(target="collection")
+    st.markdown("# Manual Polygon Extraction")
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    init_session_state()
+    init_map_state()
+
+    if st.session_state.manual_session_active:
+        render_active_session()
+    else:
+        render_setup_form()

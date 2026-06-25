@@ -1,6 +1,9 @@
 import streamlit as st
 
-from components import collection, database, import_tool, manual_tool
+from components.collection import render as render_collection
+from components.database import render as render_database
+from components.import_tool import render as render_import
+from components.manual_tool import render as render_manual
 from config import APP_NAME, GLOBAL_CSS, PAGE_LAYOUT, PAGE_TITLE
 
 st.set_page_config(
@@ -13,7 +16,8 @@ st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 if "page" not in st.session_state:
     st.session_state.page = "home"
 
-if st.session_state.page == "home":
+
+def render_home() -> None:
     st.markdown(f"# {APP_NAME}")
     st.markdown("<br><br>", unsafe_allow_html=True)
 
@@ -29,14 +33,18 @@ if st.session_state.page == "home":
             st.session_state.page = "collection"
             st.rerun()
 
-elif st.session_state.page == "database":
-    database.render()
 
-elif st.session_state.page == "collection":
-    collection.render()
+PAGES = {
+    "home": render_home,
+    "database": render_database,
+    "collection": render_collection,
+    "import": render_import,
+    "manual_extraction": render_manual,
+}
 
-elif st.session_state.page == "import":
-    import_tool.render()
+page = st.session_state.page
+if page not in PAGES:
+    st.session_state.page = "home"
+    st.rerun()
 
-elif st.session_state.page == "manual_extraction":
-    manual_tool.render()
+PAGES[page]()

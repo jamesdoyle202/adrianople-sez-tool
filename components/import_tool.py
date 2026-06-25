@@ -1,7 +1,7 @@
 import json
 import re
 from datetime import date
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 import streamlit as st
@@ -58,10 +58,12 @@ def save_polygon(
     contributor: str,
     notes: str,
     geojson_data: Dict[str, Any],
+    saved_date: Optional[str] = None,
 ) -> str:
     entries = read_index()
     filename = filename_for(country, sez_name)
-    saved_date = date.today().isoformat()
+    if saved_date is None:
+        saved_date = date.today().isoformat()
     country_normalized = normalize(country)
     sez_name_normalized = normalize(sez_name)
     entry = build_entry(
