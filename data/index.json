@@ -20,5 +20,16 @@
     "notes": "Test 1",
     "date": "2026-06-25",
     "file": "indonesia_test_1.geojson"
+  },
+  {
+    "country": "Test",
+    "sez_name": "Test",
+    "country_normalized": "test",
+    "sez_name_normalized": "test",
+    "source": "Test",
+    "contributor": "Test",
+    "notes": "test",
+    "date": "2026-06-25",
+    "file": "test_test.geojson"
   }
 ]
