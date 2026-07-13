@@ -115,6 +115,11 @@ GLOBAL_CSS = f"""
         color: {COLOR_BLUE};
         margin-bottom: {SPACING_MD};
     }}
+    .import-duplicate-warning {{
+        font-size: {FONT_SIZE_SMALL};
+        color: #c45c3c;
+        margin-bottom: {SPACING_MD};
+    }}
     #MainMenu, footer, header {{
         visibility: {"hidden" if HIDE_STREAMLIT_CHROME else "visible"};
     }}
