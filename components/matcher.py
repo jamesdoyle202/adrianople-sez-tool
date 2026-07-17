@@ -120,8 +120,7 @@ def _geometry_to_features(
     ]
 
 
-def parse_geojson_bytes(content: bytes, source_file: str) -> List[Dict[str, Any]]:
-    data = json.loads(content)
+def parse_geojson_data(data: Any, source_file: str) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
 
     if isinstance(data, dict) and data.get("type") == "FeatureCollection":
@@ -156,12 +155,74 @@ def parse_geojson_bytes(content: bytes, source_file: str) -> List[Dict[str, Any]
     raise ValueError("Unsupported GeoJSON structure.")
 
 
+def parse_geojson_bytes(content: bytes, source_file: str) -> List[Dict[str, Any]]:
+    return parse_geojson_data(json.loads(content), source_file)
+
+
+def parse_polygon_workbook(content: bytes, source_file: str) -> List[Dict[str, Any]]:
+    frame = pd.read_excel(BytesIO(content), engine="openpyxl")
+    frame.columns = [_normalize_header(column) for column in frame.columns]
+    geometry_column = next(
+        (
+            column
+            for column in frame.columns
+            if column.lower() in ("geojson", "geometry")
+        ),
+        None,
+    )
+    if geometry_column is None:
+        raise ValueError(
+            "Excel polygon files need a 'GeoJSON' or 'Geometry' column."
+        )
+
+    records: List[Dict[str, Any]] = []
+    for _, row in frame.iterrows():
+        value = row.get(geometry_column)
+        if pd.isna(value) or not str(value).strip():
+            continue
+
+        data = json.loads(str(value))
+        row_properties = {
+            column: value
+            for column, value in row.items()
+            if column != geometry_column and not pd.isna(value)
+        }
+
+        if isinstance(data, dict) and data.get("type") == "Feature":
+            data["properties"] = {
+                **row_properties,
+                **(data.get("properties") or {}),
+            }
+        elif isinstance(data, dict) and data.get("type") in (
+            "Polygon",
+            "MultiPolygon",
+        ):
+            data = {
+                "type": "Feature",
+                "properties": row_properties,
+                "geometry": data,
+            }
+
+        records.extend(parse_geojson_data(data, source_file))
+
+    return records
+
+
 def load_polygons(uploaded_files) -> gpd.GeoDataFrame:
     records: List[Dict[str, Any]] = []
 
     for uploaded in uploaded_files:
         try:
-            file_records = parse_geojson_bytes(uploaded.getvalue(), uploaded.name)
+            if uploaded.name.lower().endswith(".xlsx"):
+                file_records = parse_polygon_workbook(
+                    uploaded.getvalue(),
+                    uploaded.name,
+                )
+            else:
+                file_records = parse_geojson_bytes(
+                    uploaded.getvalue(),
+                    uploaded.name,
+                )
         except Exception as exc:
             st.warning(f"Skipped {uploaded.name}: {exc}")
             continue
@@ -349,7 +410,7 @@ def render() -> None:
     st.markdown("#### 2 · Polygon files")
     polygon_files = st.file_uploader(
         "Polygon files",
-        type=["geojson", "json"],
+        type=["geojson", "json", "xlsx"],
         accept_multiple_files=True,
         key="matcher_polygon_files",
         label_visibility="collapsed",
