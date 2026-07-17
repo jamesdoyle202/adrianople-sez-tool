@@ -120,6 +120,16 @@ GLOBAL_CSS = f"""
         color: #c45c3c;
         margin-bottom: {SPACING_MD};
     }}
+    div[data-testid="stDownloadButton"] > button {{
+        background-color: {COLOR_BLUE};
+        color: {COLOR_SURFACE};
+        border-color: {COLOR_BLUE};
+    }}
+    div[data-testid="stDownloadButton"] > button:hover {{
+        background-color: {COLOR_ACCENT};
+        color: {COLOR_SURFACE};
+        border-color: {COLOR_ACCENT};
+    }}
     #MainMenu, footer, header {{
         visibility: {"hidden" if HIDE_STREAMLIT_CHROME else "visible"};
     }}

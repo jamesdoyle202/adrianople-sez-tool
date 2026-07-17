@@ -8,6 +8,7 @@ import streamlit as st
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 
+from components.navigation import render_back_link
 from config import APP_NAME
 
 DEFAULT_CENTER = (20.0, 0.0)
@@ -42,18 +43,18 @@ def geocode_country(country: str) -> Optional[Tuple[float, float]]:
 
 
 def init_state() -> None:
+    if "named_polygons" not in st.session_state:
+        st.session_state.named_polygons = []
     if "manual_session_active" not in st.session_state:
         st.session_state.manual_session_active = False
-    if "manual_session_polygons" not in st.session_state:
-        st.session_state.manual_session_polygons = []
     if "manual_map_center" not in st.session_state:
         st.session_state.manual_map_center = DEFAULT_CENTER
     if "manual_map_zoom" not in st.session_state:
         st.session_state.manual_map_zoom = DEFAULT_ZOOM
     if "manual_geocoded_country" not in st.session_state:
         st.session_state.manual_geocoded_country = ""
-    if "manual_last_saved_fingerprint" not in st.session_state:
-        st.session_state.manual_last_saved_fingerprint = ""
+    if "manual_map_version" not in st.session_state:
+        st.session_state.manual_map_version = 0
 
 
 def update_map_center(country: str) -> None:
@@ -80,17 +81,23 @@ def start_session(country: str, collector: str, source: str, session_date: str) 
     st.session_state.manual_session_collector = collector.strip()
     st.session_state.manual_session_source = source.strip()
     st.session_state.manual_session_date = session_date
-    st.session_state.manual_session_polygons = []
-    st.session_state.manual_last_saved_fingerprint = ""
+    st.session_state.named_polygons = []
+    st.session_state.manual_map_version = 0
     update_map_center(country)
 
 
 def end_session() -> None:
     for key in list(st.session_state.keys()):
-        if key.startswith("manual_"):
+        if key.startswith("manual_") or key in ("named_polygons", "zone_name_input"):
             st.session_state.pop(key, None)
     st.session_state.manual_session_active = False
-    st.session_state.manual_session_polygons = []
+    st.session_state.named_polygons = []
+
+
+def reset_draw_state() -> None:
+    """Remount the map so Leaflet.draw starts fresh for the next polygon."""
+    st.session_state.manual_map_version += 1
+    st.session_state.pop("zone_name_input", None)
 
 
 def build_map(center: Tuple[float, float], zoom: int) -> folium.Map:
@@ -119,126 +126,103 @@ def build_map(center: Tuple[float, float], zoom: int) -> folium.Map:
     return map_obj
 
 
-def drawings_fingerprint(drawings: Any) -> str:
-    if not drawings:
-        return ""
-    return json.dumps(drawings, sort_keys=True)
+def normalize_feature(drawing: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(drawing, dict):
+        return None
+
+    if drawing.get("type") == "Feature":
+        geometry = drawing.get("geometry") or {}
+        if geometry.get("type") == "Polygon":
+            return {
+                "type": "Feature",
+                "properties": dict(drawing.get("properties") or {}),
+                "geometry": geometry,
+            }
+        return None
+
+    if drawing.get("type") == "Polygon":
+        return {
+            "type": "Feature",
+            "properties": dict(drawing.get("properties") or {}),
+            "geometry": drawing,
+        }
+
+    geometry = drawing.get("geometry")
+    if isinstance(geometry, dict) and geometry.get("type") == "Polygon":
+        return {
+            "type": "Feature",
+            "properties": dict(drawing.get("properties") or {}),
+            "geometry": geometry,
+        }
+
+    return None
 
 
-def feature_fingerprint(feature: Dict[str, Any]) -> str:
-    return json.dumps(feature.get("geometry"), sort_keys=True)
+def most_recent_polygon(map_output: Any) -> Optional[Dict[str, Any]]:
+    if not map_output:
+        return None
 
+    last_active = normalize_feature(map_output.get("last_active_drawing"))
+    if last_active is not None:
+        return last_active
 
-def polygon_features(drawings: Any) -> List[Dict[str, Any]]:
-    features: List[Dict[str, Any]] = []
+    drawings = map_output.get("all_drawings") or []
     if not isinstance(drawings, list):
-        return features
+        return None
 
-    for drawing in drawings:
-        if not isinstance(drawing, dict):
-            continue
+    for drawing in reversed(drawings):
+        feature = normalize_feature(drawing)
+        if feature is not None:
+            return feature
 
-        if drawing.get("type") == "Feature":
-            geometry = drawing.get("geometry", {})
-            if geometry.get("type") == "Polygon":
-                features.append(drawing)
-            continue
-
-        if drawing.get("type") == "Polygon":
-            features.append(
-                {
-                    "type": "Feature",
-                    "properties": drawing.get("properties", {}),
-                    "geometry": drawing,
-                }
-            )
-            continue
-
-        geometry = drawing.get("geometry")
-        if isinstance(geometry, dict) and geometry.get("type") == "Polygon":
-            features.append(
-                {
-                    "type": "Feature",
-                    "properties": drawing.get("properties", {}),
-                    "geometry": geometry,
-                }
-            )
-
-    return features
+    return None
 
 
-def saved_geometry_fingerprints() -> set:
-    return {
-        feature_fingerprint(item["feature"])
-        for item in st.session_state.manual_session_polygons
-    }
-
-
-def session_feature_collection() -> Dict[str, Any]:
-    features = []
-    for item in st.session_state.manual_session_polygons:
-        feature = dict(item["feature"])
-        properties = dict(feature.get("properties") or {})
-        properties.update(
+def export_feature_collection() -> Dict[str, Any]:
+    features: List[Dict[str, Any]] = []
+    for feature in st.session_state.named_polygons:
+        exported = {
+            "type": "Feature",
+            "properties": dict(feature.get("properties") or {}),
+            "geometry": feature.get("geometry"),
+        }
+        exported["properties"].update(
             {
-                "sez_name": item["sez_name"],
-                "notes": item.get("notes", ""),
-                "country": st.session_state.manual_session_country,
-                "collector": st.session_state.manual_session_collector,
-                "source": st.session_state.manual_session_source,
-                "date": st.session_state.manual_session_date,
+                "country": st.session_state.get("manual_session_country", ""),
+                "collector": st.session_state.get("manual_session_collector", ""),
+                "source": st.session_state.get("manual_session_source", ""),
+                "date": st.session_state.get("manual_session_date", ""),
             }
         )
-        feature["properties"] = properties
-        features.append(feature)
+        features.append(exported)
 
     return {"type": "FeatureCollection", "features": features}
 
 
-def save_drawn_polygon(drawings: Any, sez_name: str, notes: str) -> None:
-    features = polygon_features(drawings)
-    if not features:
-        st.error("Draw a polygon on the map before saving.")
+def save_named_polygon(feature: Dict[str, Any], zone_name: str) -> None:
+    name = zone_name.strip()
+    if not name:
+        st.error("Zone Name is required.")
         return
 
-    if not sez_name.strip():
-        st.error("SEZ Name is required.")
-        return
-
-    already_saved = saved_geometry_fingerprints()
-    new_features = [
-        feature
-        for feature in features
-        if feature_fingerprint(feature) not in already_saved
-    ]
-
-    if not new_features:
-        st.caption("These polygons are already saved in this session.")
-        return
-
-    base_name = sez_name.strip()
-    for index, feature in enumerate(new_features, start=1):
-        name = base_name if len(new_features) == 1 else f"{base_name} ({index})"
-        st.session_state.manual_session_polygons.append(
-            {
-                "sez_name": name,
-                "notes": notes.strip(),
-                "feature": feature,
-            }
-        )
-
-    st.session_state.manual_last_saved_fingerprint = drawings_fingerprint(drawings)
-    if len(new_features) == 1:
-        st.success(f"{base_name} saved.")
-    else:
-        st.success(f"Saved {len(new_features)} polygons.")
+    named_feature = {
+        "type": "Feature",
+        "properties": dict(feature.get("properties") or {}),
+        "geometry": feature.get("geometry"),
+    }
+    named_feature["properties"]["name"] = name
+    st.session_state.named_polygons.append(named_feature)
+    reset_draw_state()
+    st.success(f"{name} saved.")
+    st.rerun()
 
 
 def render_setup_form() -> None:
+    render_back_link(target="home")
     st.markdown(f"# {APP_NAME}")
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### Manual data collection")
-    st.caption("Draw polygons on the map, then download them as GeoJSON when you are finished.")
+    st.caption("Draw polygons on the map, name each one, then download GeoJSON when finished.")
     st.markdown("<br>", unsafe_allow_html=True)
 
     today = date.today().isoformat()
@@ -261,15 +245,26 @@ def render_setup_form() -> None:
     st.rerun()
 
 
+def render_saved_list() -> None:
+    polygons = st.session_state.named_polygons
+    if not polygons:
+        return
+
+    st.markdown("### Named polygons")
+    for index, feature in enumerate(polygons, start=1):
+        name = (feature.get("properties") or {}).get("name", f"Polygon {index}")
+        st.markdown(f"{index}. {name}")
+
+
 def render_export_section() -> None:
-    polygons = st.session_state.manual_session_polygons
+    polygons = st.session_state.named_polygons
     st.markdown("### Export")
 
     if not polygons:
-        st.caption("Save at least one polygon to enable download.")
+        st.caption("Save at least one named polygon to enable download.")
         return
 
-    collection = session_feature_collection()
+    collection = export_feature_collection()
     country_slug = st.session_state.manual_session_country.lower().replace(" ", "_")
     filename = f"{country_slug}_session.geojson"
 
@@ -278,24 +273,10 @@ def render_export_section() -> None:
         data=json.dumps(collection, indent=2),
         file_name=filename,
         mime="application/geo+json",
-        key="export_session_geojson",
+        key="export_named_polygons",
         use_container_width=True,
     )
-    st.caption("This file can be opened in geojson.io.")
-
-
-def render_saved_list() -> None:
-    polygons = st.session_state.manual_session_polygons
-    if not polygons:
-        return
-
-    st.markdown("### Saved in this session")
-    for index, item in enumerate(polygons, start=1):
-        notes = item.get("notes", "").strip()
-        line = f"{index}. {item['sez_name']}"
-        if notes:
-            line = f"{line} — {notes}"
-        st.markdown(line)
+    st.caption("This file can be opened in geojson.io. Each feature includes a name property.")
 
 
 def render_active_session() -> None:
@@ -304,6 +285,7 @@ def render_active_session() -> None:
     source = st.session_state.manual_session_source
     session_date = st.session_state.manual_session_date
 
+    render_back_link(target="home")
     st.markdown(f"# {APP_NAME}")
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -324,34 +306,23 @@ def render_active_session() -> None:
 
     map_output = st_folium(
         map_obj,
-        key="manual_extraction_map",
+        key=f"manual_extraction_map_{st.session_state.manual_map_version}",
         height=500,
         use_container_width=True,
-        returned_objects=["all_drawings"],
+        returned_objects=["all_drawings", "last_active_drawing"],
         center=st.session_state.manual_map_center,
         zoom=st.session_state.manual_map_zoom,
     )
 
-    drawings = map_output.get("all_drawings") if map_output else None
-    features = polygon_features(drawings)
-    already_saved = saved_geometry_fingerprints()
-    new_features = [
-        feature
-        for feature in features
-        if feature_fingerprint(feature) not in already_saved
-    ]
+    latest_feature = most_recent_polygon(map_output)
 
-    if new_features:
+    if latest_feature is not None:
         st.markdown("<br>", unsafe_allow_html=True)
-        with st.form("manual_polygon_save", clear_on_submit=True):
-            sez_name = st.text_input("SEZ Name")
-            notes = st.text_area("Notes")
-            submitted = st.form_submit_button("Save")
-        if submitted:
-            save_drawn_polygon(drawings, sez_name, notes)
-            st.rerun()
+        zone_name = st.text_input("Zone Name", key="zone_name_input")
+        if st.button("Save Polygon", key="save_named_polygon", use_container_width=True):
+            save_named_polygon(latest_feature, zone_name)
     else:
-        st.caption("Draw a polygon on the map to save it.")
+        st.caption("Draw a polygon on the map, then give it a zone name.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     render_saved_list()
